@@ -64,16 +64,15 @@ const cache = new Cache({
 
 ### 3.1 Options
 
-| 参数                               | 类型      | 默认值                  | 说明                             |
-| ---------------------------------- | --------- | ----------------------- | -------------------------------- |
-| `redisUrl`                         | `string`  | `process.env.REDIS_URL` | Redis 地址                       |
-| `namespace`                        | `string`  | `'cache'`               | 命名空间                         |
-| `multiLevelEnabled`                | `boolean` | `false`                 | 是否启用多级缓存                 |
-| `multiLevelTtl`                    | `number`  | `1000`                  | 多级缓存中内存层 TTL（毫秒）     |
-| `lockTimeoutSeconds`               | `number`  | `0`                     | 锁等待超时（秒），`0` 为无限等待 |
-| `lockAcquireInterval`              | `number`  | `100`                   | 尝试获取锁的时间间隔（毫秒）     |
-| `lockWatchDogSeconds`              | `number`  | `45`                    | 看门狗超时时间（秒）             |
-| `lockWatchDogRenewIntervalSeconds` | `number`  | `20`                    | 看门狗续约间隔（秒）             |
+| 参数                    | 类型      | 默认值                  | 说明                               |
+| ----------------------- | --------- | ----------------------- | ---------------------------------- |
+| `redisUrl`              | `string`  | `process.env.REDIS_URL` | Redis 地址                         |
+| `namespace`             | `string`  | `'cache'`               | 命名空间                           |
+| `multiLevelEnabled`     | `boolean` | `false`                 | 是否启用多级缓存                   |
+| `multiLevelTtl`         | `number`  | `1000`                  | 多级缓存中内存层 TTL（毫秒）       |
+| `lockTimeoutSeconds`    | `number`  | `0`                     | 锁等待超时（秒），`0` 为无限等待   |
+| `lockAcquireIntervalMs` | `number`  | `100`                   | 尝试获取锁的时间间隔（毫秒）       |
+| `lockWatchDogSeconds`   | `number`  | `20`                    | 看门狗续期操作之间的时间间隔（秒） |
 
 ### 3.2 方法
 

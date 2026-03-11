@@ -37,15 +37,10 @@ export type CacheOptions = {
    */
   lockAcquireIntervalMs: number
   /**
-   * 看门狗时间，单位秒，默认45秒
-   * @default 45
-   */
-  lockWatchDogSeconds: number
-  /**
-   * 看门狗续约时间间隔，单位秒，默认20秒
+   * 看门狗间隔时间，单位秒，默认20秒
    * @default 20
    */
-  lockWatchDogRenewIntervalSeconds: number
+  lockWatchDogSeconds: number
 }
 
 type Unit = 'y' | 'd' | 'h' | 'm' | 's'
@@ -79,10 +74,9 @@ export class Cache {
       multiLevelTtl: opts?.multiLevelTtl ?? 1000,
       lockTimeoutSeconds: opts?.lockTimeoutSeconds ?? 0,
       lockAcquireIntervalMs: opts?.lockAcquireIntervalMs ?? 100,
-      lockWatchDogSeconds: opts?.lockWatchDogSeconds ?? 45,
-      lockWatchDogRenewIntervalSeconds:
-        opts?.lockWatchDogRenewIntervalSeconds ?? 20,
+      lockWatchDogSeconds: opts?.lockWatchDogSeconds ?? 20,
     }
+
     this.asyncLock = new AsyncLock({
       maxPending: 999999,
     })
@@ -216,11 +210,13 @@ export class Cache {
     const acquireDeadline =
       acquireTimeoutMs > 0 ? Date.now() + acquireTimeoutMs : undefined // 获取锁的截止时间，0或负数表示无限等待
 
+    const watchDogExpireSeconds = this.options.lockWatchDogSeconds * 2 + 5 // 看门狗过期时间，双倍+5秒，确保在锁过期前能续约成功
+
     // 通过setnx命令尝试获取锁，成功返回true，失败返回false
     const acquireLock = async (): Promise<boolean> => {
       const result = await client.set(lockKey, lockValue, {
         condition: 'NX',
-        expiration: { type: 'EX', value: this.options.lockWatchDogSeconds },
+        expiration: { type: 'EX', value: watchDogExpireSeconds },
       })
       return result === 'OK'
     }
@@ -242,9 +238,9 @@ export class Cache {
     const watchDogTimer = setInterval(async () => {
       const currentValue = await client.get(lockKey)
       if (currentValue === lockValue) {
-        await client.expire(lockKey, this.options.lockWatchDogSeconds)
+        await client.expire(lockKey, watchDogExpireSeconds)
       }
-    }, this.options.lockWatchDogRenewIntervalSeconds * 1000)
+    }, this.options.lockWatchDogSeconds * 1000)
 
     try {
       return await fn()
