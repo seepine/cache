@@ -1,0 +1,15 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.wordWrap": "on",
+  "editor.indentSize": 2,
+  "editor.tabSize": 2,
+  "editor.detectIndentation": false,
+  // File explorer settings
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "package.json": ".npmrc, *.config.ts, bun.lock, bunfig.toml, tsconfig.json,LICENSE,CONTRIBUTING.md",
+    ".gitignore": ".gitattributes",
+    "README.md": "README.*.md"
+  }
+}

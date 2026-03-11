@@ -1,0 +1,64 @@
+{
+  "name": "@seepine/cache",
+  "version": "0.1.0",
+  "description": "cache",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "cache",
+    "redis"
+  ],
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seepine/cache.git"
+  },
+  "homepage": "https://github.com/seepine/cache",
+  "author": "seepine (https://github.com/seepine)",
+  "scripts": {
+    "build": "tsdown",
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "format": "prettier --write src",
+    "release": "commit-and-tag-version"
+  },
+  "dependencies": {
+    "@keyv/redis": "^5.1.6",
+    "async-lock": "^1.4.1",
+    "cacheable": "^2.3.3"
+  },
+  "devDependencies": {
+    "@types/async-lock": "^1.4.2",
+    "@types/node": "^18.0.0",
+    "@vitest/coverage-v8": "~3.0.9",
+    "commit-and-tag-version": "^12.6.1",
+    "prettier": "^3.8.1",
+    "tsdown": "^0.21.1",
+    "typescript": "^5.9.3",
+    "vitest": "~3.0.9"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "inlinedDependencies": {
+    "lru-cache": "10.4.3"
+  }
+}
