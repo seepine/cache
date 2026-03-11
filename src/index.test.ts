@@ -259,6 +259,23 @@ describe('lock（redis 分支）', () => {
     expect(client.del).toHaveBeenCalledTimes(1)
   })
 
+  it('timeout=0 时也能获取 redis 锁（覆盖无限等待分支）', async () => {
+    const redisLockCache = new Cache()
+    const client = createMockRedisClient({ setResults: ['OK'] })
+
+    ;(redisLockCache as any).redisStore = { client }
+
+    const res = await redisLockCache.lock(
+      'redis-timeout-zero',
+      async () => 'ok',
+      0,
+    )
+
+    expect(res).toBe('ok')
+    expect(client.set).toHaveBeenCalledTimes(1)
+    expect(client.del).toHaveBeenCalledTimes(1)
+  })
+
   it('首次获取失败时会重试', async () => {
     const redisLockCache = new Cache()
     const timeoutSpy = vi
