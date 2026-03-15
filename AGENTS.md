@@ -14,13 +14,13 @@
 ```
 src/
   index.ts              # 主入口，Cache 类实现
-  types.ts              # 类型定义（CacheClient 抽象类、配置类型、TtlValue 等）
+  types.ts              # 类型定义（CacheAdapter 抽象类、配置类型、TtlValue 等）
   utils.ts              # 工具函数（sleep、genRandomInteger、parseTtlSecond）
   index.test.ts         # Cache 类单元测试
   index.adapter.test.ts # Adapter 模式集成测试
   utils.test.ts         # 工具函数单元测试
   adapt/
-    bun.ts              # Bun Redis 适配器（BunClient）
+    bun.ts              # Bun Redis 适配器（BunRedisAdapter）
     bun.test.ts         # Bun 适配器测试（需 Bun 运行时，vitest 默认排除）
 ```
 
@@ -65,10 +65,10 @@ src/
 - `getOrSet` 内部使用 `lock` 防止缓存击穿
 - 分布式锁实现：setnx + 看门狗自动续约 + 超时控制
 
-### CacheClient 抽象类（src/types.ts）
+### CacheAdapter 抽象类（src/types.ts）
 
-- 自定义 Adapter 需继承 `CacheClient` 并实现所有抽象方法：`set`、`setnx`、`get`、`del`、`expire`、`clear`、`close`
-- 值的序列化/反序列化由 Adapter 自行处理（BunClient 使用 `JSON.stringify` / `JSON.parse`）
+- 自定义 Adapter 需继承 `CacheAdapter` 并实现所有抽象方法：`set`、`setnx`、`get`、`del`、`expire`、`clear`、`close`
+- 值的序列化/反序列化由 Adapter 自行处理（BunRedisAdapter 使用 `JSON.stringify` / `JSON.parse`）
 
 ### TTL 格式
 
@@ -84,7 +84,7 @@ src/
 ## 新增 Adapter 指南
 
 1. 在 `src/adapt/` 下创建新文件（如 `ioredis.ts`）
-2. 实现 `CacheClient` 抽象类的所有方法
+2. 实现 `CacheAdapter` 抽象类的所有方法
 3. 在 `tsdown.config.ts` 的 `entry` 中添加入口
 4. 编写对应测试文件
 

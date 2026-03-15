@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  publish:
+  check:
     runs-on: ubuntu-latest
     services:
       redis:
@@ -31,6 +31,9 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install Dependencies
         run: npm install
 
@@ -42,6 +45,9 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Test Bun Adapter
+        run: bun test src/adapt/bun.test.ts
 
       - name: Coverage
         run: npm run coverage

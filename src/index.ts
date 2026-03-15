@@ -1,74 +1,24 @@
-import { Cacheable, Keyv } from 'cacheable'
-import KeyvRedis from '@keyv/redis'
 import { LRUCache } from 'lru-cache'
 import AsyncLock from 'async-lock'
-
-export type CacheOptions = {
-  /**
-   * URL to connect to, like redis://localhost:6379
-   * defaults to process.env.REDIS_URL
-   * @default process.env.REDIS_URL
-   */
-  redisUrl?: string
-  /**
-   * 缓存命名空间，默认 'cache'
-   * 当redisUrl存在时生效，主要用于区分不同应用或模块的缓存，避免键冲突
-   * 实际使用时会在键前加上namespace作为前缀，如 'cache:key1'
-   * @default 'cache'
-   */
-  namespace: string
-  /**
-   * 是否开启多级缓存，当redisUrl存在时生效
-   * @default false
-   */
-  multiLevelEnabled: boolean
-  /**
-   * 多级缓存中内存缓存的TTL，单位毫秒，TTL过大可能存在数据不一致问题
-   * @default 1000
-   */
-  multiLevelTtl: number
-  /**
-   * 分布式锁的默认超时时间，单位秒，默认0秒，表示无限等待
-   */
-  lockTimeoutSeconds: number
-  /**
-   * 尝试获取锁的时间间隔，单位毫秒，默认100毫秒
-   * @default 100
-   */
-  lockAcquireIntervalMs: number
-  /**
-   * 看门狗间隔时间，单位秒，默认20秒
-   * @default 20
-   */
-  lockWatchDogSeconds: number
-}
-
-type Unit = 'y' | 'd' | 'h' | 'm' | 's'
-type StringValue = `${number}${Unit}`
-
-/**
- * 生成指定范围内的随机整数
- * @param min 最小值
- * @param max 最大值
- * @returns 随机整数
- */
-function getRandomInteger(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min
-}
+import type {
+  CacheAdapter,
+  CacheConstructorOpts,
+  CacheOptions,
+  TtlValue,
+} from './types'
+import { genRandomInteger, parseTtlSecond, sleep } from './utils'
+export * from './types'
 
 export class Cache {
-  private cache: Cacheable
   private options: CacheOptions
-  private redisStore?: KeyvRedis<unknown>
   private asyncLock: AsyncLock
+  private isMemoryMode: boolean
+  private memoryCache: LRUCache<string, any> | undefined
+  private multiCache: LRUCache<string, any> | undefined
+  private adapter: CacheAdapter | undefined
 
-  private readonly closeOnSignal = () => {
-    void this.close()
-  }
-
-  constructor(opts?: Partial<CacheOptions>) {
+  constructor(opts?: CacheConstructorOpts) {
     this.options = {
-      redisUrl: opts?.redisUrl,
       namespace: opts?.namespace ?? 'cache',
       multiLevelEnabled: opts?.multiLevelEnabled ?? false,
       multiLevelTtl: opts?.multiLevelTtl ?? 1000,
@@ -76,48 +26,97 @@ export class Cache {
       lockAcquireIntervalMs: opts?.lockAcquireIntervalMs ?? 100,
       lockWatchDogSeconds: opts?.lockWatchDogSeconds ?? 20,
     }
-
     this.asyncLock = new AsyncLock({
       maxPending: 999999,
     })
-    const redisUrl = this.options.redisUrl || process.env['REDIS_URL']
-    if (redisUrl) {
-      this.redisStore = new KeyvRedis(redisUrl, { keyPrefixSeparator: ':' })
-      if (this.options.multiLevelEnabled === true) {
-        const primary = new Keyv({
-          ttl: this.options.multiLevelTtl,
-          store: new LRUCache({ max: 9999 }),
-        })
-        this.cache = new Cacheable({
-          namespace: this.options.namespace,
-          primary,
-          secondary: this.redisStore,
-        })
-      } else {
-        this.cache = new Cacheable({
-          namespace: this.options.namespace,
-          primary: this.redisStore,
-        })
-      }
-      process.on('SIGTERM', this.closeOnSignal)
-      process.on('SIGINT', this.closeOnSignal)
+
+    this.isMemoryMode = opts?.adapter === undefined
+    if (this.isMemoryMode) {
+      this.memoryCache = new LRUCache({ max: 999999 })
     } else {
-      const primary = new Keyv({ store: new LRUCache({ max: 999999 }) })
-      this.cache = new Cacheable({ namespace: this.options.namespace, primary })
+      this.multiCache = new LRUCache({ max: 999999 })
+      this.adapter = opts?.adapter
     }
+  }
+
+  /**
+   * 设置缓存
+   * @param key 缓存键
+   * @param value 缓存值
+   * @param ttl 过期时间，单位秒，也支持字符串格式如 '10s', '5m' 等
+   * @returns 当前实例
+   */
+  async set<T>(key: string, value: T, ttl?: TtlValue): Promise<this> {
+    const ttlSecond = parseTtlSecond(ttl)
+    const k = `${this.options.namespace}:cache:${key}`
+    if (this.isMemoryMode) {
+      this.memoryCache?.set(k, value, {
+        ttl: ttlSecond * 1000, // LRUCache的ttl单位是毫秒，而parseTtlSecond返回的是秒，所以需要转换
+      })
+      return this
+    }
+    await this.adapter?.set(k, value, ttlSecond)
+    if (this.options.multiLevelEnabled) {
+      this.multiCache?.set(k, value, {
+        ttl: this.options.multiLevelTtl, // 多级缓存的内存层使用 multiLevelTtl，保持短时间缓存
+      })
+    }
+    return this
+  }
+
+  /**
+   * 获取缓存值
+   * @param key 缓存键
+   * @returns 缓存值或undefined
+   */
+  async get<T>(key: string): Promise<T | undefined> {
+    const k = `${this.options.namespace}:cache:${key}`
+    if (this.isMemoryMode) {
+      return this.memoryCache?.get(k)
+    }
+    if (this.options.multiLevelEnabled) {
+      const value = this.multiCache?.get(k)
+      if (value !== undefined) {
+        return value
+      }
+    }
+    const value = await this.adapter?.get<T>(k)
+    if (value !== undefined && this.options.multiLevelEnabled) {
+      this.multiCache?.set(k, value, {
+        ttl: this.options.multiLevelTtl,
+      })
+    }
+    return value
+  }
+
+  /**
+   * 删除缓存
+   * @param key 缓存键
+   */
+  async del(key: string): Promise<void> {
+    const k = `${this.options.namespace}:cache:${key}`
+    if (this.isMemoryMode) {
+      this.memoryCache?.delete(k)
+      return
+    }
+    await this.adapter?.del(k)
+    if (this.options.multiLevelEnabled) {
+      this.multiCache?.delete(k)
+    }
+    return
   }
 
   /**
    * 如果缓存中存在则返回，否则执行getFn获取值并缓存
    * @param key 缓存键
    * @param getFn 获取值的函数
-   * @param ttl 过期时间，单位毫秒，也支持字符串格式如 '10s', '5m' 等
+   * @param ttl 过期时间，单位秒，也支持字符串格式如 '10s', '5m' 等
    * @returns 缓存值
    */
   async getOrSet<T>(
     key: string,
     getFn: () => Promise<T> | T,
-    ttl?: StringValue | number,
+    ttl?: TtlValue,
   ): Promise<T> {
     const cached = await this.get<T>(key)
     if (cached !== undefined) {
@@ -135,45 +134,18 @@ export class Cache {
       return result
     })
   }
-
-  /**
-   * 设置缓存
-   * @param key 缓存键
-   * @param value 缓存值
-   * @param ttl 过期时间，单位毫秒，也支持字符串格式如 '10s', '5m' 等
-   * @returns 是否设置成功
-   */
-  async set<T>(
-    key: string,
-    value: T,
-    ttl?: StringValue | number,
-  ): Promise<boolean> {
-    return await this.cache.set(key, value, ttl)
-  }
-
-  /**
-   * 获取缓存值
-   * @param key 缓存键
-   * @returns 缓存值或undefined
-   */
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.cache.get(key)
-  }
-
-  /**
-   * 删除缓存
-   * @param key 缓存键
-   * @returns 是否删除成功
-   */
-  async del(key: string): Promise<boolean> {
-    return await this.cache.delete(key)
-  }
-
   /**
    * 清空缓存
    */
   async clear(): Promise<void> {
-    await this.cache.clear()
+    if (this.isMemoryMode) {
+      this.memoryCache?.clear()
+      return
+    }
+    await this.adapter?.clear(this.options.namespace)
+    if (this.options.multiLevelEnabled) {
+      this.multiCache?.clear()
+    }
   }
 
   /**
@@ -196,29 +168,33 @@ export class Cache {
         `lock cache failed, key: ${key}, timeoutSeconds: must be greater than or equal to 0`,
       )
     }
-    const client = this.redisStore?.client
+    const adapter = this.adapter
     // 若redis未配置，则降级为单机锁
-    if (client === undefined) {
+    if (adapter === undefined) {
       return await this.asyncLock.acquire(lockKey, fn, {
-        timeout: timeout,
+        timeout: timeout * 1000, // async-lock 期望毫秒，0 * 1000 = 0 仍代表无限等待
       })
     }
 
-    const lockValue = `${Date.now()}_${getRandomInteger(1000, 9999)}` // 锁的值，包含时间戳和随机数，确保唯一性
+    // 锁的值，包含时间戳和随机数，确保唯一性
+    const lockValue = `${Date.now()}_${genRandomInteger(1000, 9999)}`
 
-    const acquireTimeoutMs = timeout * 1000 // 锁超时转为毫秒
+    // 锁超时转为毫秒
+    const acquireTimeoutMs = timeout * 1000
+    // 获取锁的截止时间，0或负数表示无限等待
     const acquireDeadline =
-      acquireTimeoutMs > 0 ? Date.now() + acquireTimeoutMs : undefined // 获取锁的截止时间，0或负数表示无限等待
-
-    const watchDogExpireSeconds = this.options.lockWatchDogSeconds * 2 + 5 // 看门狗过期时间，双倍+5秒，确保在锁过期前能续约成功
+      acquireTimeoutMs > 0 ? Date.now() + acquireTimeoutMs : undefined
+    // 看门狗过期时间，双倍+5秒，确保在锁过期前能续约成功
+    const watchDogExpireSeconds = this.options.lockWatchDogSeconds * 2 + 5
 
     // 通过setnx命令尝试获取锁，成功返回true，失败返回false
     const acquireLock = async (): Promise<boolean> => {
-      const result = await client.set(lockKey, lockValue, {
-        condition: 'NX',
-        expiration: { type: 'EX', value: watchDogExpireSeconds },
-      })
-      return result === 'OK'
+      try {
+        await adapter.setnx(lockKey, lockValue, watchDogExpireSeconds)
+        return true
+      } catch {
+        return false
+      }
     }
     // 等待获取锁，直到成功或超时
     while (!(await acquireLock())) {
@@ -229,16 +205,14 @@ export class Cache {
         )
       }
       // 等待lockAcquireInterval 毫秒后重试获取锁
-      await new Promise((resolve) =>
-        setTimeout(resolve, this.options.lockAcquireIntervalMs),
-      )
+      await sleep(this.options.lockAcquireIntervalMs)
     }
 
     // 成功获取锁，启动看门狗定时器，定期续约锁的过期时间，防止锁过期被其他客户端获取
     const watchDogTimer = setInterval(async () => {
-      const currentValue = await client.get(lockKey)
+      const currentValue = await adapter.get(lockKey)
       if (currentValue === lockValue) {
-        await client.expire(lockKey, watchDogExpireSeconds)
+        await adapter.expire(lockKey, watchDogExpireSeconds)
       }
     }, this.options.lockWatchDogSeconds * 1000)
 
@@ -247,9 +221,9 @@ export class Cache {
     } finally {
       clearInterval(watchDogTimer)
       // 释放锁，只有持有锁的客户端才能释放
-      const currentValue = await client.get(lockKey)
+      const currentValue = await adapter.get(lockKey)
       if (currentValue === lockValue) {
-        await client.del(lockKey)
+        await adapter.del(lockKey)
       }
     }
   }
@@ -257,11 +231,9 @@ export class Cache {
   /**
    * 关闭连接
    */
-  async close() {
+  async close(): Promise<void> {
     try {
-      process.off('SIGTERM', this.closeOnSignal)
-      process.off('SIGINT', this.closeOnSignal)
-      await this.cache.disconnect()
+      await this.adapter?.close()
     } catch {}
   }
 }
